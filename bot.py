@@ -80,6 +80,13 @@ def get_latest_notices():
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         rows = soup.select('tbody tr')
+
+        # --- 추가할 디버깅 코드 ---
+        if not rows:
+            print("❗ 서버가 게시판이 아닌 다른 페이지를 반환했습니다. HTML 일부 확인:")
+            # 서버가 보낸 HTML 내용의 앞부분 500글자만 출력하여 확인합니다.
+            print(response.text[:500]) 
+        # -------------------------
         
         for row in rows:
             num_element = row.select_one('.td_num2')
