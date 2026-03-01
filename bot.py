@@ -1,4 +1,5 @@
 import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 import os
 import sys
@@ -65,6 +66,8 @@ def get_latest_notices():
     url = "https://dorm.knu.ac.kr/app/board24"
     latest_posts = []
 
+    scraper = cloudscraper.create_scraper()  # Cloudflare 우회용 세션 생성
+
     # 일반 웹 브라우저에서 접속하는 것처럼 위장하는 헤더 정보
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0',
@@ -73,7 +76,7 @@ def get_latest_notices():
     
     try:
         # headers를 추가하여 요청을 보냅니다.
-        response = requests.get(url, headers=headers)
+        response = scraper.get(url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         rows = soup.select('tbody tr')
