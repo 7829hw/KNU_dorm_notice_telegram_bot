@@ -64,9 +64,16 @@ def get_latest_notices():
     """게시판을 크롤링하여 최신 글 목록을 가져옵니다."""
     url = "https://dorm.knu.ac.kr/app/board24"
     latest_posts = []
+
+    # 일반 웹 브라우저에서 접속하는 것처럼 위장하는 헤더 정보
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+    }
     
     try:
-        response = requests.get(url)
+        # headers를 추가하여 요청을 보냅니다.
+        response = requests.get(url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         rows = soup.select('tbody tr')
