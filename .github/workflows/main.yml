@@ -2,7 +2,7 @@ name: KNU Dormitory Notice Bot
 
 on:
   schedule:
-    - cron: '*/10 * * * *' # 매 10분마다 실행 (UTC 기준)
+    - cron: '0 * * * *' # 매시간 정각(0분)에 1번씩 실행 (UTC 기준)
   workflow_dispatch: # GitHub 웹페이지에서 수동으로 실행할 수 있는 버튼 활성화
 
 jobs:
