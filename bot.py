@@ -83,8 +83,8 @@ def get_latest_notices():
             if not num_element:
                 continue
             num_text = num_element.text.strip()
-            if num_text == "공지":
-                continue
+            # if num_text == "공지":
+            #     continue
                 
             title_element = row.select_one('.td_subject .bo_tit a')
             title = title_element.text.strip()
