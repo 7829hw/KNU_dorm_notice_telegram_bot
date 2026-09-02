@@ -18,12 +18,14 @@ Telegram Bot Container
 
 ## 대상 게시판
 
-| board_key | 게시판                                             |
-| --------- | --------------------------------------------------- |
-| `notice`  | 생활관 공지사항 (`https://dorm.knu.ac.kr/app/board24`) |
+| board_key   | 게시판                                                       |
+| ----------- | ------------------------------------------------------------- |
+| `admission` | 선발 공지사항 (`https://dorm.knu.ac.kr/app/board24`)          |
+| `btl`       | 공지사항(BTL) (`https://dorm.knu.ac.kr/app/board21`)          |
 
-현재는 게시판이 하나뿐이지만, 다른 게시판이 추가되더라도 같은 구조를 그대로
-재사용할 수 있도록 `config.BOARDS`에 목록 형태로 관리합니다.
+게시판별로 마지막 글 번호를 따로 관리하므로, 한 게시판의 글 번호가 더 크더라도
+다른 게시판의 새 글을 빠뜨리지 않습니다. 다른 게시판이 추가되더라도 같은
+구조를 그대로 재사용할 수 있도록 `config.BOARDS`에 목록 형태로 관리합니다.
 
 ## 실행 방법
 
@@ -66,9 +68,8 @@ docker compose down
 `/settings` 에서 켜고 끌 수 있는 항목입니다.
 
 ```text
-☑ 생활관 공지사항
-☑ 본문 포함
-☑ 첨부파일·이미지 포함
+☑ 선발 공지사항        ☑ 본문 포함
+☑ 공지사항(BTL)        ☑ 첨부파일·이미지 포함
 ```
 
 `본문 포함`과 `첨부파일·이미지 포함`은 서로 독립적입니다.
@@ -102,7 +103,7 @@ Telegram 명령은 24시간 즉시 처리합니다. CSE 학과 게시판과 달�
 | 테이블          | 내용                                                       |
 | --------------- | ---------------------------------------------------------- |
 | `users`         | `chat_id`, `active`, `created_at`                          |
-| `subscriptions` | `notice` 게시판 + `include_content`, `include_attachments` |
+| `subscriptions` | 게시판 2종(`admission`, `btl`) + `include_content`, `include_attachments` |
 | `board_state`   | 게시판별 마지막 처리 공지 ID                                |
 | `pending_media` | 전송 실패 후 재시도가 필요한 이미지·첨부파일 (사용자별)     |
 
@@ -118,7 +119,10 @@ Telegram 명령은 24시간 즉시 처리합니다. CSE 학과 게시판과 달�
 ### 기존 상태 이어받기
 
 GitHub Actions 시절의 `last_num.txt` 를 `data/last_num.txt` 에 두면, DB가 비어
-있는 최초 1회에 한해 마지막 글 번호를 가져옵니다.
+있는 최초 1회에 한해 마지막 글 번호를 가져옵니다. 그 시절에는 선발
+공지사항(`admission`)만 감시했으므로, 단순 숫자 하나뿐인 옛 파일은
+`admission` 게시판에만 적용되고 `btl` 게시판은 0부터(현재 최신 글부터)
+시작합니다.
 
 ## 개발
 

@@ -33,7 +33,7 @@ class UserSettingsTest(DatabaseTestCase):
 
         self.assertFalse(created)
         self.assertFalse(settings["include_attachments"])
-        self.assertTrue(settings["notice"])
+        self.assertTrue(settings["admission"])
 
     def test_start_reactivates_a_stopped_user_without_resetting_options(self):
         self.database.ensure_user(1001)
@@ -87,20 +87,25 @@ class UserSettingsTest(DatabaseTestCase):
 class RecipientFilterTest(DatabaseTestCase):
     def setUp(self):
         super().setUp()
-        # 본문은 받지 않고 공지·첨부파일만 받음
+        # 선발 공지사항만 구독
         self.database.ensure_user(1)
-        self.database.toggle_option(1, "include_content")
-        # 공지 게시판 구독을 해제함
+        self.database.toggle_option(1, "btl")
+        # BTL만 구독하고 본문은 받지 않음
         self.database.ensure_user(2)
-        self.database.toggle_option(2, "notice")
+        self.database.toggle_option(2, "admission")
+        self.database.toggle_option(2, "include_content")
         # 모두 구독하지만 알림 중지 상태
         self.database.ensure_user(3)
         self.database.set_active(3, False)
 
     def test_only_subscribers_of_the_board_receive_it(self):
         self.assertEqual(
-            [row["chat_id"] for row in self.database.get_recipients("notice")],
+            [row["chat_id"] for row in self.database.get_recipients("admission")],
             [1],
+        )
+        self.assertEqual(
+            [row["chat_id"] for row in self.database.get_recipients("btl")],
+            [2],
         )
 
     def test_inactive_users_are_always_excluded(self):
@@ -112,7 +117,7 @@ class RecipientFilterTest(DatabaseTestCase):
                 )
 
     def test_recipients_carry_content_and_attachment_options(self):
-        recipient = self.database.get_recipients("notice")[0]
+        recipient = self.database.get_recipients("btl")[0]
 
         self.assertFalse(recipient["include_content"])
         self.assertTrue(recipient["include_attachments"])
@@ -128,36 +133,46 @@ class BoardStateTest(DatabaseTestCase):
             {key: 0 for key in BOARD_KEYS},
         )
 
-        self.database.set_last_number("notice", 4455)
+        self.database.set_last_number("admission", 4455)
+        self.database.set_last_number("btl", 4271)
 
-        self.assertEqual(self.database.get_last_numbers()["notice"], 4455)
+        self.assertEqual(self.database.get_last_numbers()["admission"], 4455)
+        self.assertEqual(self.database.get_last_numbers()["btl"], 4271)
 
     def test_state_survives_a_restart_of_the_process(self):
-        self.database.set_last_number("notice", 4455)
+        self.database.set_last_number("admission", 4455)
         self.database.close()
 
         with Database(self.db_path) as reopened:
-            self.assertEqual(reopened.get_last_numbers()["notice"], 4455)
+            self.assertEqual(reopened.get_last_numbers()["admission"], 4455)
 
     def test_legacy_json_state_file_is_imported_once(self):
         legacy = Path(self._directory.name) / "last_num.txt"
-        legacy.write_text(json.dumps({"notice": 4455}), encoding="utf-8")
+        legacy.write_text(
+            json.dumps({"admission": 4455, "btl": 4271}), encoding="utf-8"
+        )
 
         self.assertTrue(self.database.seed_board_state_from_legacy_file(legacy))
-        self.assertEqual(self.database.get_last_numbers(), {"notice": 4455})
+        self.assertEqual(
+            self.database.get_last_numbers(), {"admission": 4455, "btl": 4271}
+        )
 
         # 이미 상태가 있으면 다시 덮어쓰지 않습니다.
-        self.database.set_last_number("notice", 4500)
+        self.database.set_last_number("admission", 4500)
         self.assertFalse(self.database.seed_board_state_from_legacy_file(legacy))
-        self.assertEqual(self.database.get_last_numbers()["notice"], 4500)
+        self.assertEqual(self.database.get_last_numbers()["admission"], 4500)
 
-    def test_legacy_single_number_applies_to_the_only_board(self):
+    def test_legacy_single_number_applies_only_to_the_old_admission_board(self):
+        # GitHub Actions 시절에는 선발 공지사항(board24)만 감시했으므로,
+        # 그 시절 last_num.txt의 단일 번호는 BTL 게시판에는 적용되지 않습니다.
         legacy = Path(self._directory.name) / "last_num.txt"
         legacy.write_text("4455", encoding="utf-8")
 
         self.database.seed_board_state_from_legacy_file(legacy)
 
-        self.assertEqual(self.database.get_last_numbers(), {"notice": 4455})
+        self.assertEqual(
+            self.database.get_last_numbers(), {"admission": 4455, "btl": 0}
+        )
 
     def test_missing_legacy_file_is_ignored(self):
         self.assertFalse(

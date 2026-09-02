@@ -22,13 +22,21 @@ CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "600"))
 # CSE 게시판과 달리 요일·시간 제한 없이 항상 크롤링합니다.
 
 # ================= 게시판 =================
-# 현재는 선발 공지사항 게시판 하나만 대상이지만, 추후 다른 게시판이 추가되더라도
-# 같은 구조를 재사용할 수 있도록 게시판을 목록(BOARDS)으로 관리합니다.
+# 다른 게시판이 추가되어도 같은 구조를 재사용할 수 있도록 게시판을 목록(BOARDS)으로
+# 관리합니다. "uses_legacy_cursor"는 GitHub Actions 시절 last_num.txt가 어떤
+# 게시판의 커서였는지 표시합니다 (그 시절엔 선발 공지사항만 감시했습니다).
 BOARDS = (
     {
-        "key": "notice",
-        "name": "생활관 공지사항",
+        "key": "admission",
+        "name": "선발 공지사항",
         "url": "https://dorm.knu.ac.kr/app/board24",
+        "uses_legacy_cursor": True,
+    },
+    {
+        "key": "btl",
+        "name": "공지사항(BTL)",
+        "url": "https://dorm.knu.ac.kr/app/board21",
+        "uses_legacy_cursor": False,
     },
 )
 BOARD_KEYS = tuple(board["key"] for board in BOARDS)
@@ -38,7 +46,8 @@ BOARD_NAMES = {board["key"]: board["name"] for board in BOARDS}
 CONTENT_OPTION_KEYS = ("include_content", "include_attachments")
 SUBSCRIPTION_KEYS = BOARD_KEYS + CONTENT_OPTION_KEYS
 OPTION_LABELS = {
-    "notice": "생활관 공지사항",
+    "admission": "선발 공지사항",
+    "btl": "공지사항(BTL)",
     "include_content": "본문 포함",
     "include_attachments": "첨부파일·이미지 포함",
 }

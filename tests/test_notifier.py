@@ -15,8 +15,8 @@ def make_post(number=4456):
         "number": number,
         "title": "테스트 공지",
         "link": f"https://dorm.knu.ac.kr/app/board24/{number}",
-        "board_key": "notice",
-        "board_name": "생활관 공지사항",
+        "board_key": "admission",
+        "board_name": "선발 공지사항",
         "board_url": "https://dorm.knu.ac.kr/app/board24",
         "content": "본문 내용",
         "content_markdown_blocks": ["본문 내용"],
@@ -66,7 +66,7 @@ class DeliverNoticeTest(NotifierTestCase):
 
         self.assertEqual(len(self.sent_texts()), 1)
         message = self.sent_texts()[0]
-        self.assertIn(r"\[생활관 공지사항\] 테스트 공지", message)
+        self.assertIn(r"\[선발 공지사항\] 테스트 공지", message)
         self.assertIn("원문 보기", message)
         self.assertNotIn("본문 내용", message)
 

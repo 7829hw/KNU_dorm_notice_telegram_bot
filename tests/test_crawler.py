@@ -54,25 +54,33 @@ def make_notice_list_html(board, post_id, title, display_number="1"):
 
 
 class NoticeCrawlerTest(unittest.TestCase):
-    def test_board_url_matches_the_requested_source(self):
+    def test_board_urls_match_the_requested_sources(self):
         self.assertEqual(
             tuple(board["url"] for board in BOARDS),
-            ("https://dorm.knu.ac.kr/app/board24",),
+            (
+                "https://dorm.knu.ac.kr/app/board24",
+                "https://dorm.knu.ac.kr/app/board21",
+            ),
         )
 
-    def test_parse_notice_list_extracts_the_path_based_post_id(self):
-        board = BOARDS[0]
-        posts = parse_notice_list(
-            make_notice_list_html(board, 4455, "생활관 후보자 추가모집 안내"),
-            board,
+    def test_parse_notice_list_extracts_the_path_based_post_id_for_every_board(self):
+        fixtures = (
+            (BOARDS[0], 4455, "선발 공지사항 추가모집 안내"),
+            (BOARDS[1], 4271, "생활관 화재 대피훈련 안내"),
         )
 
-        self.assertEqual(len(posts), 1)
-        self.assertEqual(posts[0]["number"], 4455)
-        self.assertEqual(posts[0]["title"], "생활관 후보자 추가모집 안내")
-        self.assertEqual(posts[0]["board_key"], board["key"])
-        self.assertEqual(posts[0]["board_url"], board["url"])
-        self.assertEqual(posts[0]["link"], f"{board['url']}/4455")
+        for board, post_id, title in fixtures:
+            with self.subTest(board=board["key"]):
+                posts = parse_notice_list(
+                    make_notice_list_html(board, post_id, title), board
+                )
+
+                self.assertEqual(len(posts), 1)
+                self.assertEqual(posts[0]["number"], post_id)
+                self.assertEqual(posts[0]["title"], title)
+                self.assertEqual(posts[0]["board_key"], board["key"])
+                self.assertEqual(posts[0]["board_url"], board["url"])
+                self.assertEqual(posts[0]["link"], f"{board['url']}/{post_id}")
 
     def test_pinned_rows_marked_notice_are_still_parsed(self):
         board = BOARDS[0]
@@ -84,7 +92,7 @@ class NoticeCrawlerTest(unittest.TestCase):
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["number"], 4455)
 
-    def test_get_latest_notices_requests_the_board(self):
+    def test_get_latest_notices_requests_every_board(self):
         class FakeResponse:
             def __init__(self, text):
                 self.text = text
@@ -92,17 +100,22 @@ class NoticeCrawlerTest(unittest.TestCase):
             def raise_for_status(self):
                 return None
 
-        board = BOARDS[0]
+        responses = [
+            FakeResponse(make_notice_list_html(board, index, board["name"]))
+            for index, board in enumerate(BOARDS, start=1)
+        ]
+
         with patch.object(crawler.requests, "Session") as session_class:
             session = session_class.return_value
-            session.get.side_effect = [
-                FakeResponse(make_notice_list_html(board, 1, board["name"]))
-            ]
+            session.get.side_effect = responses
 
             posts_by_board = crawler.get_latest_notices()
 
-        self.assertEqual(session.get.call_args_list[0].args[0], board["url"])
-        self.assertEqual(set(posts_by_board), {board["key"]})
+        self.assertEqual(
+            [call.args[0] for call in session.get.call_args_list],
+            [board["url"] for board in BOARDS],
+        )
+        self.assertEqual(set(posts_by_board), {board["key"] for board in BOARDS})
 
     def test_notice_details_uses_the_board_as_referer(self):
         class FakeResponse:

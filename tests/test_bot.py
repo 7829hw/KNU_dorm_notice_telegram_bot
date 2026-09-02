@@ -98,7 +98,7 @@ class CommandTest(BotTestCase):
 
         settings = self.database.get_settings(1001)
         self.assertFalse(settings["active"])
-        self.assertTrue(settings["notice"])
+        self.assertTrue(settings["admission"])
         self.assertIn("중지", update.effective_message.replies[0].text)
 
     async def test_settings_shows_a_toggle_for_every_option(self):
@@ -161,7 +161,7 @@ class CallbackTest(BotTestCase):
         self.assertTrue(all(settings[key] for key in config.SUBSCRIPTION_KEYS))
 
     async def test_callback_from_an_unknown_user_is_answered(self):
-        update = make_update(9999, callback_data="toggle:notice")
+        update = make_update(9999, callback_data="toggle:admission")
 
         await bot.settings_callback(update, self.context)
 
@@ -179,18 +179,17 @@ class CallbackTest(BotTestCase):
 
 
 class NoticeCheckTest(BotTestCase):
-    BOARD = config.BOARDS[0]
-
-    def make_posts(self, numbers):
+    def make_posts(self, numbers, board=None):
+        board = board or config.BOARDS[0]
         return {
-            self.BOARD["key"]: [
+            board["key"]: [
                 {
                     "number": number,
-                    "title": f"{self.BOARD['name']} {number}번 글",
-                    "link": f"{self.BOARD['url']}/{number}",
-                    "board_key": self.BOARD["key"],
-                    "board_name": self.BOARD["name"],
-                    "board_url": self.BOARD["url"],
+                    "title": f"{board['name']} {number}번 글",
+                    "link": f"{board['url']}/{number}",
+                    "board_key": board["key"],
+                    "board_name": board["name"],
+                    "board_url": board["url"],
                 }
                 for number in numbers
             ]
@@ -218,10 +217,10 @@ class NoticeCheckTest(BotTestCase):
         deliver = await self.run_check(self.make_posts([4454, 4455]))
 
         deliver.assert_not_awaited()
-        self.assertEqual(self.database.get_last_numbers()["notice"], 4455)
+        self.assertEqual(self.database.get_last_numbers()["admission"], 4455)
 
     async def test_new_notices_go_only_to_active_subscribers(self):
-        self.database.set_last_number("notice", 4455)
+        self.database.set_last_number("admission", 4455)
         self.database.ensure_user(1)
         self.database.ensure_user(2)
         self.database.set_active(2, False)
@@ -232,10 +231,10 @@ class NoticeCheckTest(BotTestCase):
         post, recipients = deliver.await_args.args
         self.assertEqual(post["number"], 4456)
         self.assertEqual([row["chat_id"] for row in recipients], [1])
-        self.assertEqual(self.database.get_last_numbers()["notice"], 4456)
+        self.assertEqual(self.database.get_last_numbers()["admission"], 4456)
 
     async def test_a_restart_does_not_resend_the_same_notice(self):
-        self.database.set_last_number("notice", 4455)
+        self.database.set_last_number("admission", 4455)
         self.database.ensure_user(1)
         posts = self.make_posts([4456])
 
@@ -248,28 +247,28 @@ class NoticeCheckTest(BotTestCase):
         deliver = await self.run_check(self.make_posts([4456]))
 
         deliver.assert_not_awaited()
-        self.assertEqual(self.database.get_last_numbers()["notice"], 4456)
+        self.assertEqual(self.database.get_last_numbers()["admission"], 4456)
 
     async def test_a_failed_delivery_keeps_the_cursor_for_a_retry(self):
-        self.database.set_last_number("notice", 4455)
+        self.database.set_last_number("admission", 4455)
         self.database.ensure_user(1)
 
         await self.run_check(self.make_posts([4456, 4457]), deliver_result=False)
 
-        self.assertEqual(self.database.get_last_numbers()["notice"], 4455)
+        self.assertEqual(self.database.get_last_numbers()["admission"], 4455)
 
     async def test_the_cursor_advances_even_when_nobody_subscribes(self):
-        self.database.set_last_number("notice", 4455)
+        self.database.set_last_number("admission", 4455)
 
         with patch.object(bot.crawler, "get_notice_details") as get_details:
             deliver = await self.run_check(self.make_posts([4456]))
 
         deliver.assert_not_awaited()
         get_details.assert_not_called()
-        self.assertEqual(self.database.get_last_numbers()["notice"], 4456)
+        self.assertEqual(self.database.get_last_numbers()["admission"], 4456)
 
     async def test_a_detail_failure_stops_the_board_without_losing_the_notice(self):
-        self.database.set_last_number("notice", 4455)
+        self.database.set_last_number("admission", 4455)
         self.database.ensure_user(1)
         deliver = AsyncMock(return_value=True)
 
@@ -288,7 +287,22 @@ class NoticeCheckTest(BotTestCase):
             await bot.run_notice_check(self.context.bot, self.database)
 
         deliver.assert_not_awaited()
-        self.assertEqual(self.database.get_last_numbers()["notice"], 4455)
+        self.assertEqual(self.database.get_last_numbers()["admission"], 4455)
+
+    async def test_each_board_keeps_its_own_cursor(self):
+        posts = {}
+        for board, number in zip(config.BOARDS, (4456, 4272)):
+            self.database.set_last_number(board["key"], number - 1)
+            posts.update(self.make_posts([number], board))
+        self.database.ensure_user(1)
+
+        deliver = await self.run_check(posts)
+
+        self.assertEqual(deliver.await_count, 2)
+        self.assertEqual(
+            self.database.get_last_numbers(),
+            {"admission": 4456, "btl": 4272},
+        )
 
 
 class CrawlJobTest(BotTestCase):

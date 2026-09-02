@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config import BOARD_KEYS, SUBSCRIPTION_KEYS
+from config import BOARD_KEYS, BOARDS, SUBSCRIPTION_KEYS
 
 _SUBSCRIPTION_COLUMNS = ",\n    ".join(
     f"{key} INTEGER NOT NULL DEFAULT 1" for key in SUBSCRIPTION_KEYS
@@ -238,9 +238,12 @@ class Database:
             return False
 
         if content.isdigit():
-            # 게시판이 하나뿐이던 시절의 단일 번호를 그대로 이어받습니다.
+            # 게시판이 나뉘기 전의 단일 번호는 그 시절 커서를 쓰던 게시판에만 적용합니다.
             legacy_number = int(content)
-            saved_numbers = {key: legacy_number for key in BOARD_KEYS}
+            saved_numbers = {
+                board["key"]: legacy_number if board["uses_legacy_cursor"] else 0
+                for board in BOARDS
+            }
         else:
             try:
                 saved_numbers = json.loads(content)
