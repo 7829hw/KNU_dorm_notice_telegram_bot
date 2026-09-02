@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -182,6 +183,59 @@ class BoardStateTest(DatabaseTestCase):
                 Path(self._directory.name) / "absent.txt"
             )
         )
+
+
+class SchemaMigrationTest(unittest.TestCase):
+    """새 게시판·기숙사 추가 후에도 기존 DB 파일을 그대로 열 수 있는지 확인합니다."""
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.db_path = Path(self._directory.name) / "bot.db"
+
+    def make_pre_jaejeong_and_pre_meal_database(self, chat_id):
+        # jaejeong 게시판과 meal_subscriptions 테이블이 생기기 전의 스키마를
+        # 그대로 흉내 냅니다 (구버전 컨테이너가 남긴 data/bot.db 상황).
+        connection = sqlite3.connect(str(self.db_path))
+        connection.executescript(
+            """
+            CREATE TABLE users (
+                chat_id INTEGER PRIMARY KEY,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE subscriptions (
+                chat_id INTEGER PRIMARY KEY REFERENCES users(chat_id),
+                admission INTEGER NOT NULL DEFAULT 1,
+                btl INTEGER NOT NULL DEFAULT 1,
+                include_content INTEGER NOT NULL DEFAULT 1,
+                include_attachments INTEGER NOT NULL DEFAULT 1
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO users (chat_id, active, created_at) VALUES (?, 1, 'now')",
+            (chat_id,),
+        )
+        connection.execute(
+            "INSERT INTO subscriptions (chat_id) VALUES (?)", (chat_id,)
+        )
+        connection.commit()
+        connection.close()
+
+    def test_opening_an_old_database_backfills_new_columns_and_tables(self):
+        self.make_pre_jaejeong_and_pre_meal_database(1001)
+
+        with Database(self.db_path) as database:
+            settings = database.get_settings(1001)
+
+            self.assertTrue(settings["admission"])
+            self.assertTrue(settings["btl"])
+            # 새로 추가된 게시판은 기존 게시판과 같은 기본값(ON)으로 채워집니다.
+            self.assertTrue(settings["jaejeong"])
+            for key in DORM_KEYS:
+                self.assertFalse(settings[f"meal_{key}"])
+            self.assertEqual(database.get_meal_dorms(1001), [])
 
 
 class MealDormSelectionTest(DatabaseTestCase):

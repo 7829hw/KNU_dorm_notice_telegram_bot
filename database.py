@@ -76,7 +76,32 @@ class Database:
             self._connection.execute("PRAGMA synchronous=FULL")
             self._connection.execute("PRAGMA foreign_keys=ON")
             self._connection.executescript(SCHEMA)
+            # CREATE TABLE IF NOT EXISTS는 이미 있는 테이블에 새 컬럼을 추가해 주지
+            # 않으므로, 게시판·기숙사가 새로 추가될 때마다 여기서 직접 채워 줍니다.
+            self._add_missing_columns("subscriptions", SUBSCRIPTION_KEYS, default=1)
+            self._add_missing_columns("meal_subscriptions", DORM_KEYS, default=0)
+            # get_settings()가 users/subscriptions/meal_subscriptions를 INNER JOIN
+            # 하므로, meal_subscriptions 테이블이 이번에 새로 생겼을 때처럼 기존
+            # 사용자에게 설정 행이 없으면 해당 사용자는 조회 자체가 실패합니다.
+            self._connection.execute(
+                "INSERT OR IGNORE INTO subscriptions (chat_id) SELECT chat_id FROM users"
+            )
+            self._connection.execute(
+                "INSERT OR IGNORE INTO meal_subscriptions (chat_id) SELECT chat_id FROM users"
+            )
             self._connection.commit()
+
+    def _add_missing_columns(self, table, columns, default):
+        existing = {
+            row["name"]
+            for row in self._connection.execute(f"PRAGMA table_info({table})")
+        }
+        for column in columns:
+            if column not in existing:
+                self._connection.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} "
+                    f"INTEGER NOT NULL DEFAULT {int(default)}"
+                )
 
     def close(self):
         with self._lock:
