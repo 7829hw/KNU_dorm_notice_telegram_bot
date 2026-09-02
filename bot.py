@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import (
     AIORateLimiter,
@@ -42,6 +42,16 @@ HELP_TEXT = (
     "/bab, /meal - 선택한 기숙사의 오늘 식단 보기\n"
     "/help - 이 도움말 보기"
 )
+
+# "/"를 입력했을 때 Telegram 클라이언트가 보여 주는 명령어 설명 목록입니다.
+BOT_COMMANDS = [
+    BotCommand("start", "알림 받기 시작 (기존 설정은 그대로 유지)"),
+    BotCommand("settings", "공지·식단표 설정 변경"),
+    BotCommand("stop", "알림 일시 중지 (설정은 보관)"),
+    BotCommand("bab", "선택한 기숙사의 오늘 식단 보기"),
+    BotCommand("meal", "선택한 기숙사의 오늘 식단 보기 (/bab 과 동일)"),
+    BotCommand("help", "도움말 보기"),
+]
 
 NO_MEAL_DORM_SELECTED_TEXT = (
     "선택된 기숙사가 없습니다.\n"
@@ -362,6 +372,11 @@ async def check_notices_job(context: ContextTypes.DEFAULT_TYPE):
 # ----------------------------------------------------------------------
 # 애플리케이션
 # ----------------------------------------------------------------------
+async def on_startup(application):
+    """"/"를 입력했을 때 Telegram 클라이언트가 명령어 설명을 보여 주도록 등록합니다."""
+    await application.bot.set_my_commands(BOT_COMMANDS)
+
+
 async def on_shutdown(application):
     """종료 시 SQLite 연결을 정상적으로 닫습니다."""
     database = application.bot_data.get("database")
@@ -376,6 +391,7 @@ def build_application(database):
         .token(config.TELEGRAM_TOKEN)
         # 구독자가 늘어도 텔레그램 전송 제한에 걸리지 않도록 속도를 조절합니다.
         .rate_limiter(AIORateLimiter())
+        .post_init(on_startup)
         .post_shutdown(on_shutdown)
         .build()
     )

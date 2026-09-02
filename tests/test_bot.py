@@ -472,6 +472,26 @@ class MealCommandTest(BotTestCase):
             self.assertLessEqual(len(reply.text), config.TELEGRAM_MESSAGE_LIMIT)
 
 
+class BotCommandMenuTest(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_registers_the_command_list_with_telegram(self):
+        application = SimpleNamespace(bot=AsyncMock())
+
+        await bot.on_startup(application)
+
+        application.bot.set_my_commands.assert_awaited_once_with(bot.BOT_COMMANDS)
+
+    def test_every_command_handler_has_a_menu_entry(self):
+        menu_commands = {command.command for command in bot.BOT_COMMANDS}
+
+        self.assertEqual(menu_commands, {"start", "settings", "stop", "bab", "meal", "help"})
+
+    def test_bab_and_meal_share_one_description_reference(self):
+        descriptions = {command.command: command.description for command in bot.BOT_COMMANDS}
+
+        self.assertIn("식단", descriptions["bab"])
+        self.assertIn("식단", descriptions["meal"])
+
+
 class CrawlJobTest(BotTestCase):
     async def test_a_second_run_is_skipped_while_one_is_already_in_progress(self):
         started = asyncio.Event()

@@ -67,6 +67,9 @@ docker compose down
 | `/bab`, `/meal` | 선택한 기숙사의 오늘 식단 보기 (완전히 동일한 명령)                |
 | `/help`         | 명령 안내                                                        |
 
+봇 시작 시 `setMyCommands` API로 위 명령어 목록과 설명을 Telegram에 등록하므로,
+채팅창에 `/`만 입력해도 클라이언트가 명령어와 설명을 목록으로 보여 줍니다.
+
 `/settings` 에서 켜고 끌 수 있는 항목입니다.
 
 ```text
