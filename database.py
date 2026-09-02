@@ -6,10 +6,14 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config import BOARD_KEYS, BOARDS, SUBSCRIPTION_KEYS
+from config import BOARD_KEYS, BOARDS, DORM_KEYS, SUBSCRIPTION_KEYS
 
 _SUBSCRIPTION_COLUMNS = ",\n    ".join(
     f"{key} INTEGER NOT NULL DEFAULT 1" for key in SUBSCRIPTION_KEYS
+)
+# 식단표는 새 기능이라 공지 구독과 달리 기본값을 꺼짐으로 둡니다.
+_MEAL_COLUMNS = ",\n    ".join(
+    f"{key} INTEGER NOT NULL DEFAULT 0" for key in DORM_KEYS
 )
 
 SCHEMA = f"""
@@ -23,6 +27,12 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     chat_id                   INTEGER PRIMARY KEY
         REFERENCES users(chat_id) ON DELETE CASCADE,
     {_SUBSCRIPTION_COLUMNS}
+);
+
+CREATE TABLE IF NOT EXISTS meal_subscriptions (
+    chat_id                   INTEGER PRIMARY KEY
+        REFERENCES users(chat_id) ON DELETE CASCADE,
+    {_MEAL_COLUMNS}
 );
 
 CREATE TABLE IF NOT EXISTS board_state (
@@ -102,16 +112,22 @@ class Database:
                 "INSERT OR IGNORE INTO subscriptions (chat_id) VALUES (?)",
                 (chat_id,),
             )
+            connection.execute(
+                "INSERT OR IGNORE INTO meal_subscriptions (chat_id) VALUES (?)",
+                (chat_id,),
+            )
         return self.get_settings(chat_id), not existed
 
     def get_settings(self, chat_id):
-        """사용자의 활성 여부와 모든 구독 항목을 하나의 dict로 반환합니다."""
+        """사용자의 활성 여부, 공지 구독, 식단표 선택을 하나의 dict로 반환합니다."""
         with self._lock:
             row = self._connection.execute(
                 """
-                SELECT users.chat_id, users.active, users.created_at, subscriptions.*
+                SELECT users.chat_id, users.active, users.created_at,
+                       subscriptions.*, meal_subscriptions.*
                   FROM users
                   JOIN subscriptions USING (chat_id)
+                  JOIN meal_subscriptions USING (chat_id)
                  WHERE users.chat_id = ?
                 """,
                 (chat_id,),
@@ -122,6 +138,8 @@ class Database:
         settings["active"] = bool(row["active"])
         for key in SUBSCRIPTION_KEYS:
             settings[key] = bool(row[key])
+        for key in DORM_KEYS:
+            settings[f"meal_{key}"] = bool(row[key])
         return settings
 
     def toggle_option(self, chat_id, option):
@@ -182,6 +200,30 @@ class Database:
             }
             for row in rows
         ]
+
+    # ------------------------------------------------------------------
+    # 식단표 기숙사 선택
+    # ------------------------------------------------------------------
+    def toggle_meal_dorm(self, chat_id, dorm_key):
+        """식단표에서 볼 기숙사를 켜고 끕니다. 공지 구독 설정과는 별도로 관리합니다."""
+        if dorm_key not in DORM_KEYS:
+            raise ValueError(f"알 수 없는 기숙사입니다: {dorm_key}")
+        with self._lock, self._connection as connection:
+            connection.execute(
+                f"UPDATE meal_subscriptions SET {dorm_key} = 1 - {dorm_key} WHERE chat_id = ?",
+                (chat_id,),
+            )
+        return self.get_settings(chat_id)
+
+    def get_meal_dorms(self, chat_id):
+        """사용자가 선택한 기숙사 키 목록을 config.DORM_KEYS 순서로 반환합니다."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM meal_subscriptions WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+        if row is None:
+            return []
+        return [key for key in DORM_KEYS if row[key]]
 
     def count_users(self, active_only=True):
         query = "SELECT COUNT(*) FROM users"

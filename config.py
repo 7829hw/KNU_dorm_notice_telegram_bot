@@ -52,6 +52,32 @@ OPTION_LABELS = {
     "include_attachments": "첨부파일·이미지 포함",
 }
 
+# ================= 식단표 =================
+# 기숙사별 오늘의 식단 페이지입니다. get_mode 값은 기숙사마다 고정되어 있습니다.
+DORMS = (
+    {
+        "key": "cheomseong",
+        "name": "첨성관",
+        "meal_url": "https://dorm.knu.ac.kr/newlife/newlife_04.php?get_mode=3",
+    },
+    {
+        "key": "nuri",
+        "name": "누리관",
+        "meal_url": "https://dorm.knu.ac.kr/newlife/newlife_04.php?get_mode=4",
+    },
+    {
+        "key": "boram",
+        "name": "보람관",
+        "meal_url": "https://dorm.knu.ac.kr/newlife/newlife_04.php?get_mode=2",
+    },
+)
+DORM_KEYS = tuple(dorm["key"] for dorm in DORMS)
+DORM_NAMES = {dorm["key"]: dorm["name"] for dorm in DORMS}
+
+# 식단표 페이지의 "아침"/"점심"/"저녁" 라벨을 dict 키로 옮깁니다.
+MEAL_LABELS = {"아침": "breakfast", "점심": "lunch", "저녁": "dinner"}
+MEAL_EMPTY_TEXT = "없음"
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"

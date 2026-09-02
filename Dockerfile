@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY config.py crawler.py database.py notifier.py bot.py ./
+COPY config.py crawler.py meal_crawler.py database.py notifier.py bot.py ./
 
 # 바인드 마운트한 ./data 를 그대로 쓸 수 있도록 호스트 기본 사용자와 같은 UID를 씁니다.
 RUN useradd --create-home --uid 1000 app \

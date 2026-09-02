@@ -116,9 +116,13 @@ class CommandTest(BotTestCase):
         self.assertEqual(
             [button.callback_data for button in buttons],
             [f"toggle:{key}" for key in config.SUBSCRIPTION_KEYS]
-            + ["enable:all", "disable:all"],
+            + ["enable:all", "disable:all"]
+            + [f"toggle_meal:{key}" for key in config.DORM_KEYS],
         )
         self.assertIn("공지 알림 설정", reply.text)
+        self.assertIn("🍚 식단표", reply.text)
+        for dorm in config.DORMS:
+            self.assertIn(dorm["name"], reply.text)
 
     async def test_help_lists_every_command(self):
         update = make_update(1001)
@@ -167,6 +171,18 @@ class CallbackTest(BotTestCase):
 
         self.assertEqual(len(update.callback_query.answers), 1)
         self.assertEqual(update.callback_query.edits, [])
+
+    async def test_meal_dorm_toggles_are_independent_of_notice_subscriptions(self):
+        await bot.start_command(make_update(1001), self.context)
+
+        update = make_update(1001, callback_data="toggle_meal:cheomseong")
+        await bot.settings_callback(update, self.context)
+
+        settings = self.database.get_settings(1001)
+        self.assertTrue(settings["meal_cheomseong"])
+        self.assertFalse(settings["meal_nuri"])
+        self.assertTrue(settings["admission"])
+        self.assertEqual(len(update.callback_query.edits), 1)
 
     async def test_unknown_callback_data_is_ignored(self):
         await bot.start_command(make_update(1001), self.context)
@@ -303,6 +319,133 @@ class NoticeCheckTest(BotTestCase):
             self.database.get_last_numbers(),
             {"admission": 4456, "btl": 4272},
         )
+
+
+class MealCommandTest(BotTestCase):
+    def make_meal(self, dorm_name, suffix=""):
+        return {
+            "dorm": dorm_name,
+            "date": "2026-09-03",
+            "breakfast": f"아침{suffix}",
+            "lunch": f"점심{suffix}",
+            "dinner": f"저녁{suffix}",
+        }
+
+    async def test_no_dorm_selected_shows_a_guidance_message(self):
+        await bot.start_command(make_update(1001), self.context)
+
+        update = make_update(1001)
+        await bot.meal_command(update, self.context)
+
+        text = update.effective_message.replies[0].text
+        self.assertIn("선택된 기숙사가 없습니다", text)
+        self.assertIn("/settings", text)
+
+    async def test_single_dorm_output_includes_all_three_meals(self):
+        await bot.start_command(make_update(1001), self.context)
+        self.database.toggle_meal_dorm(1001, "cheomseong")
+
+        update = make_update(1001)
+        with patch.object(
+            bot.meal_crawler, "get_today_meal", return_value=self.make_meal("첨성관")
+        ):
+            await bot.meal_command(update, self.context)
+
+        text = update.effective_message.replies[0].text
+        self.assertIn("🏠 첨성관", text)
+        self.assertIn("🌅 아침\n아침", text)
+        self.assertIn("☀️ 점심\n점심", text)
+        self.assertIn("🌙 저녁\n저녁", text)
+        self.assertNotIn("누리관", text)
+        self.assertNotIn("보람관", text)
+
+    async def test_multiple_dorms_are_all_reported_in_one_command(self):
+        await bot.start_command(make_update(1001), self.context)
+        self.database.toggle_meal_dorm(1001, "cheomseong")
+        self.database.toggle_meal_dorm(1001, "boram")
+
+        update = make_update(1001)
+        with patch.object(
+            bot.meal_crawler,
+            "get_today_meal",
+            side_effect=lambda dorm_key: self.make_meal(config.DORM_NAMES[dorm_key]),
+        ):
+            await bot.meal_command(update, self.context)
+
+        text = update.effective_message.replies[0].text
+        self.assertIn("🏠 첨성관", text)
+        self.assertIn("🏠 보람관", text)
+        self.assertLess(text.index("첨성관"), text.index("보람관"))
+
+    async def test_a_failed_dorm_does_not_block_the_others(self):
+        await bot.start_command(make_update(1001), self.context)
+        self.database.toggle_meal_dorm(1001, "cheomseong")
+        self.database.toggle_meal_dorm(1001, "nuri")
+
+        def fake_get_today_meal(dorm_key):
+            if dorm_key == "nuri":
+                raise RuntimeError("페이지 구조 변경")
+            return self.make_meal(config.DORM_NAMES[dorm_key])
+
+        update = make_update(1001)
+        with patch.object(
+            bot.meal_crawler, "get_today_meal", side_effect=fake_get_today_meal
+        ):
+            await bot.meal_command(update, self.context)
+
+        text = update.effective_message.replies[0].text
+        self.assertIn("🏠 첨성관", text)
+        self.assertIn("🌅 아침\n아침", text)
+        self.assertIn("🏠 누리관\n식단을 불러오지 못했습니다.", text)
+
+    async def test_bab_and_meal_produce_identical_output(self):
+        await bot.start_command(make_update(1001), self.context)
+        self.database.toggle_meal_dorm(1001, "cheomseong")
+
+        with patch.object(
+            bot.meal_crawler, "get_today_meal", return_value=self.make_meal("첨성관")
+        ):
+            # /bab 과 /meal 은 같은 핸들러 함수를 공유하므로 반복 호출로도
+            # 결과가 동일함을 확인합니다 (아래 등록 테스트가 핸들러가 같음을 보장합니다).
+            bab_update = make_update(1001)
+            await bot.meal_command(bab_update, self.context)
+
+            meal_update = make_update(1001)
+            await bot.meal_command(meal_update, self.context)
+
+        self.assertEqual(
+            bab_update.effective_message.replies[0].text,
+            meal_update.effective_message.replies[0].text,
+        )
+
+    async def test_bab_and_meal_are_registered_to_the_same_handler(self):
+        with patch.object(bot.config, "TELEGRAM_TOKEN", "123456:test-token"):
+            application = bot.build_application(self.database)
+        handlers = application.handlers[0]
+
+        commands_to_callbacks = {
+            command: handler.callback
+            for handler in handlers
+            if isinstance(handler, bot.CommandHandler)
+            for command in handler.commands
+        }
+
+        self.assertIs(commands_to_callbacks["bab"], bot.meal_command)
+        self.assertIs(commands_to_callbacks["meal"], bot.meal_command)
+
+    async def test_a_long_meal_message_is_split_within_the_telegram_limit(self):
+        await bot.start_command(make_update(1001), self.context)
+        self.database.toggle_meal_dorm(1001, "cheomseong")
+
+        long_meal = self.make_meal("첨성관", suffix="가" * config.TELEGRAM_MESSAGE_LIMIT)
+        update = make_update(1001)
+        with patch.object(bot.meal_crawler, "get_today_meal", return_value=long_meal):
+            await bot.meal_command(update, self.context)
+
+        replies = update.effective_message.replies
+        self.assertGreater(len(replies), 1)
+        for reply in replies:
+            self.assertLessEqual(len(reply.text), config.TELEGRAM_MESSAGE_LIMIT)
 
 
 class CrawlJobTest(BotTestCase):

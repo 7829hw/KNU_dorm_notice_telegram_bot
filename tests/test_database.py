@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from config import BOARD_KEYS, SUBSCRIPTION_KEYS
+from config import BOARD_KEYS, DORM_KEYS, SUBSCRIPTION_KEYS
 from database import Database
 
 
@@ -180,6 +180,72 @@ class BoardStateTest(DatabaseTestCase):
                 Path(self._directory.name) / "absent.txt"
             )
         )
+
+
+class MealDormSelectionTest(DatabaseTestCase):
+    def test_new_user_starts_with_no_dorm_selected(self):
+        self.database.ensure_user(1001)
+
+        settings = self.database.get_settings(1001)
+        for key in DORM_KEYS:
+            self.assertFalse(settings[f"meal_{key}"], key)
+        self.assertEqual(self.database.get_meal_dorms(1001), [])
+
+    def test_each_dorm_can_be_toggled_independently(self):
+        self.database.ensure_user(1001)
+
+        self.database.toggle_meal_dorm(1001, "cheomseong")
+        self.database.toggle_meal_dorm(1001, "boram")
+
+        settings = self.database.get_settings(1001)
+        self.assertTrue(settings["meal_cheomseong"])
+        self.assertFalse(settings["meal_nuri"])
+        self.assertTrue(settings["meal_boram"])
+        self.assertEqual(self.database.get_meal_dorms(1001), ["cheomseong", "boram"])
+
+    def test_multiple_dorms_can_be_selected_at_once(self):
+        self.database.ensure_user(1001)
+
+        for key in DORM_KEYS:
+            self.database.toggle_meal_dorm(1001, key)
+
+        self.assertEqual(self.database.get_meal_dorms(1001), list(DORM_KEYS))
+
+    def test_toggling_twice_deselects_the_dorm(self):
+        self.database.ensure_user(1001)
+
+        self.database.toggle_meal_dorm(1001, "nuri")
+        self.database.toggle_meal_dorm(1001, "nuri")
+
+        self.assertEqual(self.database.get_meal_dorms(1001), [])
+
+    def test_unknown_dorm_is_rejected(self):
+        self.database.ensure_user(1001)
+
+        with self.assertRaises(ValueError):
+            self.database.toggle_meal_dorm(1001, "unknown")
+
+    def test_meal_selection_is_independent_of_notice_subscriptions(self):
+        self.database.ensure_user(1001)
+
+        self.database.toggle_meal_dorm(1001, "cheomseong")
+        self.database.toggle_option(1001, "admission")
+
+        settings = self.database.get_settings(1001)
+        self.assertTrue(settings["meal_cheomseong"])
+        self.assertFalse(settings["admission"])
+        self.assertTrue(settings["btl"])
+
+    def test_selection_survives_a_restart_of_the_process(self):
+        self.database.ensure_user(1001)
+        self.database.toggle_meal_dorm(1001, "boram")
+        self.database.close()
+
+        with Database(self.db_path) as reopened:
+            self.assertEqual(reopened.get_meal_dorms(1001), ["boram"])
+
+    def test_unregistered_user_has_no_selected_dorms(self):
+        self.assertEqual(self.database.get_meal_dorms(9999), [])
 
 
 class PendingMediaTest(DatabaseTestCase):

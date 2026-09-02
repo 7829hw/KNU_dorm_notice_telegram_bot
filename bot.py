@@ -15,7 +15,8 @@ from telegram.ext import (
 
 import config
 import crawler
-from config import BOARDS, OPTION_LABELS, SUBSCRIPTION_KEYS
+import meal_crawler
+from config import BOARDS, DORM_NAMES, DORMS, OPTION_LABELS, SUBSCRIPTION_KEYS
 from database import Database
 from notifier import Notifier
 
@@ -29,10 +30,17 @@ logger = logging.getLogger("knu-dorm-notice-bot")
 HELP_TEXT = (
     "🤖 경북대학교 생활관 공지 알림 봇\n\n"
     "/start - 알림 받기 시작 (기존 설정은 그대로 유지)\n"
-    "/settings - 본문·첨부파일 알림 설정 변경\n"
+    "/settings - 본문·첨부파일·식단표 설정 변경\n"
     "/stop - 알림 일시 중지 (설정은 보관)\n"
+    "/bab, /meal - 선택한 기숙사의 오늘 식단 보기\n"
     "/help - 이 도움말 보기"
 )
+
+NO_MEAL_DORM_SELECTED_TEXT = (
+    "선택된 기숙사가 없습니다.\n"
+    "⚙️ /settings에서 식단을 확인할 기숙사를 선택해 주세요."
+)
+MEAL_LOAD_FAILURE_TEXT = "식단을 불러오지 못했습니다."
 
 # 같은 크롤링 작업이 겹쳐 실행되지 않도록 막습니다.
 _crawl_lock = asyncio.Lock()
@@ -60,6 +68,11 @@ def format_settings_text(settings):
         for key in ("include_content", "include_attachments")
     ]
     lines.append("")
+    lines.append("🍚 식단표")
+    lines += [
+        f"{mark('meal_' + dorm['key'])} {dorm['name']}" for dorm in DORMS
+    ]
+    lines.append("")
     if settings["active"]:
         lines.append("아래 버튼을 눌러 항목을 켜고 끌 수 있습니다.")
     else:
@@ -82,6 +95,15 @@ def build_settings_keyboard(settings):
         InlineKeyboardButton("✅ 전체 활성화", callback_data="enable:all"),
         InlineKeyboardButton("🔕 전체 비활성화", callback_data="disable:all"),
     ])
+    rows += [
+        [
+            InlineKeyboardButton(
+                f"{'✅' if settings['meal_' + dorm['key']] else '⬜'} {dorm['name']}",
+                callback_data=f"toggle_meal:{dorm['key']}",
+            )
+        ]
+        for dorm in DORMS
+    ]
     return InlineKeyboardMarkup(rows)
 
 
@@ -168,6 +190,10 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             database.set_all_options, chat_id, action == "enable"
         )
         notice = "모든 항목을 켰습니다." if action == "enable" else "모든 항목을 껐습니다."
+    elif action == "toggle_meal" and value in config.DORM_KEYS:
+        settings = await asyncio.to_thread(database.toggle_meal_dorm, chat_id, value)
+        state = "선택됨" if settings[f"meal_{value}"] else "선택 해제됨"
+        notice = f"{DORM_NAMES[value]} 식단표: {state}"
     else:
         await query.answer("알 수 없는 설정입니다.")
         return
@@ -182,6 +208,47 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 같은 내용으로의 수정은 텔레그램이 거부하므로 무시해도 됩니다.
         if "not modified" not in str(error).lower():
             raise
+
+
+# ----------------------------------------------------------------------
+# 식단표
+# ----------------------------------------------------------------------
+def format_meal_section(dorm_name, meal=None):
+    """기숙사 하나의 식단 블록을 만듭니다. 조회에 실패했으면 안내 문구만 넣습니다."""
+    if meal is None:
+        return f"🏠 {dorm_name}\n{MEAL_LOAD_FAILURE_TEXT}"
+    return (
+        f"🏠 {dorm_name}\n"
+        f"🌅 아침\n{meal['breakfast']}\n\n"
+        f"☀️ 점심\n{meal['lunch']}\n\n"
+        f"🌙 저녁\n{meal['dinner']}"
+    )
+
+
+async def meal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """선택한 모든 기숙사의 오늘 식단을 보여 줍니다. /bab 과 /meal 이 이 함수를 함께 씁니다."""
+    chat_id = update.effective_chat.id
+    database = get_database(context)
+    dorm_keys = await asyncio.to_thread(database.get_meal_dorms, chat_id)
+
+    if not dorm_keys:
+        await update.effective_message.reply_text(NO_MEAL_DORM_SELECTED_TEXT)
+        return
+
+    sections = []
+    for dorm_key in dorm_keys:
+        try:
+            meal = await asyncio.to_thread(meal_crawler.get_today_meal, dorm_key)
+        except Exception as error:
+            # 한 기숙사의 조회 실패가 다른 기숙사의 식단 출력을 막지 않게 합니다.
+            logger.warning("%s 식단 조회 실패: %s", DORM_NAMES[dorm_key], error)
+            sections.append(format_meal_section(DORM_NAMES[dorm_key]))
+        else:
+            sections.append(format_meal_section(DORM_NAMES[dorm_key], meal))
+
+    text = "\n\n".join([f"🍚 {meal_crawler.today_string()} 식단", *sections])
+    for message in crawler.split_message(text):
+        await update.effective_message.reply_text(message)
 
 
 # ----------------------------------------------------------------------
@@ -312,6 +379,7 @@ def build_application(database):
     application.add_handler(CommandHandler("settings", settings_command))
     application.add_handler(CommandHandler("stop", stop_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler(["bab", "meal"], meal_command))
     application.add_handler(CallbackQueryHandler(settings_callback))
 
     application.job_queue.run_repeating(
