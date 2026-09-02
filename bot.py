@@ -1,162 +1,344 @@
-import requests
-from bs4 import BeautifulSoup
-import os
-import sys
-import time
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+"""Telegram 명령 처리와 주기적인 공지 확인을 담당하는 상시 실행 봇입니다."""
 
-# ================= 설정 부분 =================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-LAST_NUM_FILE = "last_num.txt"
-CHAT_IDS_FILE = "chat_ids.txt"
-# =============================================
+import asyncio
+import logging
 
-def update_subscribers():
-    """새로 봇에게 말을 건 사용자의 Chat ID를 수집하여 파일에 저장합니다."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    subscribers = set()
-    if os.path.exists(CHAT_IDS_FILE):
-        with open(CHAT_IDS_FILE, 'r', encoding='utf-8') as f:
-            for line in f:
-                stripped = line.strip()
-                if stripped:
-                    subscribers.add(stripped)
-    try:
-        response = requests.get(url)
-        data = response.json()
-        if data.get("ok"):
-            for result in data.get("result", []):
-                if "message" in result and "chat" in result["message"]:
-                    chat_id = str(result["message"]["chat"]["id"])
-                    subscribers.add(chat_id)
-                    
-        with open(CHAT_IDS_FILE, 'w', encoding='utf-8') as f:
-            for chat_id in subscribers:
-                f.write(chat_id + "\n")
-        return list(subscribers)
-    except Exception as e:
-        print(f"구독자 업데이트 중 오류 발생: {e}")
-        return list(subscribers)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
+from telegram.ext import (
+    AIORateLimiter,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+)
 
-def send_telegram_message(text, chat_ids):
-    """여러 사용자에게 메시지를 전송합니다."""
-    for chat_id in chat_ids:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
-        try:
-            requests.post(url, data=payload)
-        except Exception as e:
-            print(f"Chat ID {chat_id} 전송 실패: {e}")
+import config
+import crawler
+from config import BOARDS, OPTION_LABELS, SUBSCRIPTION_KEYS
+from database import Database
+from notifier import Notifier
 
-def get_latest_notices():
-    """Selenium을 사용하여 자바스크립트 보안을 통과한 후 최신 글을 가져옵니다."""
-    url = "https://dorm.knu.ac.kr/app/board24"
-    latest_posts = []
-    
-    # Chrome 브라우저를 화면 없이(Headless) 실행하기 위한 설정
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-    
-    driver = None
-    try:
-        # 웹 브라우저 실행
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.get(url)
-        
-        # 브라우저가 자바스크립트 챌린지를 풀고 실제 페이지를 로딩할 때까지 5초간 대기합니다.
-        time.sleep(5)
-        
-        # 렌더링이 끝난 페이지의 HTML 코드를 가져옵니다.
-        html = driver.page_source
-        soup = BeautifulSoup(html, 'html.parser')
-        rows = soup.select('tbody tr')
-        
-        if not rows:
-            print("❗ 대기 후에도 게시글을 찾지 못했습니다. 방화벽이 더 강력하게 차단했을 수 있습니다.")
-            
-        for row in rows:
-            num_element = row.select_one('.td_num2')
-            if not num_element:
-                continue
-            num_text = num_element.text.strip()
-            # if num_text == "공지":
-            #     continue
-                
-            title_element = row.select_one('.td_subject .bo_tit a')
-            title = title_element.text.strip()
-            link = title_element['href']
-            
-            try:
-                real_post_id = int(link.split('/')[-1].split('?')[0])
-            except ValueError:
-                continue
-            
-            latest_posts.append({
-                'number': real_post_id,
-                'title': title,
-                'link': link
-            })
-    except Exception as e:
-        print(f"크롤링 중 오류 발생: {e}")
-    finally:
-        # 작업이 끝나면 반드시 브라우저를 종료해야 메모리 누수가 발생하지 않습니다.
-        if driver:
-            driver.quit()
-            
-    return latest_posts
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    level=logging.INFO,
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("knu-dorm-notice-bot")
 
-def check_new_notices():
-    """새로운 글 확인 및 알림 로직 (기존과 동일)"""
-    if not TELEGRAM_TOKEN:
-        print("오류: 환경변수에 TELEGRAM_TOKEN이 설정되지 않았습니다.")
-        sys.exit(1)
+HELP_TEXT = (
+    "🤖 경북대학교 생활관 공지 알림 봇\n\n"
+    "/start - 알림 받기 시작 (기존 설정은 그대로 유지)\n"
+    "/settings - 본문·첨부파일 알림 설정 변경\n"
+    "/stop - 알림 일시 중지 (설정은 보관)\n"
+    "/help - 이 도움말 보기"
+)
 
-    chat_ids = update_subscribers()
-    if not chat_ids:
-        print("등록된 구독자가 없습니다.")
+# 같은 크롤링 작업이 겹쳐 실행되지 않도록 막습니다.
+_crawl_lock = asyncio.Lock()
 
-    last_num = 0
-    if os.path.exists(LAST_NUM_FILE):
-        with open(LAST_NUM_FILE, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-            if content.isdigit():
-                last_num = int(content)
 
-    posts = get_latest_notices()
-    if not posts:
-        print("게시글을 불러오지 못했습니다.")
+def get_database(context):
+    return context.application.bot_data["database"]
+
+
+# ----------------------------------------------------------------------
+# 설정 화면
+# ----------------------------------------------------------------------
+def format_settings_text(settings):
+    """현재 구독 상태를 사람이 읽을 수 있는 형태로 만듭니다."""
+    def mark(key):
+        return "✅" if settings[key] else "⬜"
+
+    lines = ["🔔 공지 알림 설정", ""]
+    lines += [
+        f"{mark(board['key'])} {OPTION_LABELS[board['key']]}" for board in BOARDS
+    ]
+    lines.append("")
+    lines += [
+        f"{mark(key)} {OPTION_LABELS[key]}"
+        for key in ("include_content", "include_attachments")
+    ]
+    lines.append("")
+    if settings["active"]:
+        lines.append("아래 버튼을 눌러 항목을 켜고 끌 수 있습니다.")
+    else:
+        lines.append("현재 알림이 중지되어 있습니다. /start 로 다시 시작할 수 있습니다.")
+    return "\n".join(lines)
+
+
+def build_settings_keyboard(settings):
+    """항목별 토글과 전체 켜기/끄기 버튼을 만듭니다."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"{'✅' if settings[key] else '⬜'} {OPTION_LABELS[key]}",
+                callback_data=f"toggle:{key}",
+            )
+        ]
+        for key in SUBSCRIPTION_KEYS
+    ]
+    rows.append([
+        InlineKeyboardButton("✅ 전체 활성화", callback_data="enable:all"),
+        InlineKeyboardButton("🔕 전체 비활성화", callback_data="disable:all"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+# ----------------------------------------------------------------------
+# 명령 처리
+# ----------------------------------------------------------------------
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """신규 사용자는 기본값으로 등록하고, 기존 사용자는 설정을 지킨 채 재개합니다."""
+    chat_id = update.effective_chat.id
+    settings, created = await asyncio.to_thread(
+        get_database(context).ensure_user, chat_id
+    )
+
+    if created:
+        message = (
+            "✅ 경북대학교 생활관 공지 알림을 시작합니다.\n\n"
+            "현재 모든 공지를 받고 있습니다.\n\n"
+            "⚙️ /settings 명령에서 알림 설정을 변경할 수 있습니다."
+        )
+    else:
+        enabled = [
+            OPTION_LABELS[board["key"]]
+            for board in BOARDS
+            if settings[board["key"]]
+        ]
+        summary = ", ".join(enabled) if enabled else "없음 (모든 게시판이 꺼져 있습니다)"
+        message = (
+            "✅ 공지 알림을 다시 시작합니다.\n\n"
+            f"기존 설정을 그대로 사용합니다.\n구독 중인 게시판: {summary}\n\n"
+            "⚙️ /settings 명령에서 알림 설정을 변경할 수 있습니다."
+        )
+    await update.effective_message.reply_text(message)
+
+
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """인라인 키보드 설정 화면을 보여 줍니다."""
+    chat_id = update.effective_chat.id
+    database = get_database(context)
+    settings = await asyncio.to_thread(database.get_settings, chat_id)
+    if settings is None:
+        settings, _ = await asyncio.to_thread(database.ensure_user, chat_id)
+
+    await update.effective_message.reply_text(
+        format_settings_text(settings),
+        reply_markup=build_settings_keyboard(settings),
+    )
+
+
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """설정을 지우지 않고 수신만 중지합니다."""
+    chat_id = update.effective_chat.id
+    database = get_database(context)
+    settings = await asyncio.to_thread(database.get_settings, chat_id)
+    if settings is not None:
+        await asyncio.to_thread(database.set_active, chat_id, False)
+
+    await update.effective_message.reply_text(
+        "🔕 공지 알림을 중지했습니다.\n\n"
+        "설정은 그대로 보관되며, /start 를 실행하면 이전 설정 그대로 다시 받을 수 있습니다."
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(HELP_TEXT)
+
+
+async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """설정 버튼을 처리하고 새 메시지 대신 기존 메시지를 갱신합니다."""
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+    database = get_database(context)
+
+    settings = await asyncio.to_thread(database.get_settings, chat_id)
+    if settings is None:
+        await query.answer("먼저 /start 를 실행해 주세요.", show_alert=True)
         return
 
-    posts.reverse()
-    new_last_num = last_num
+    action, _, value = (query.data or "").partition(":")
+    if action == "toggle" and value in SUBSCRIPTION_KEYS:
+        settings = await asyncio.to_thread(database.toggle_option, chat_id, value)
+        notice = f"{OPTION_LABELS[value]}: {'켜짐' if settings[value] else '꺼짐'}"
+    elif action in {"enable", "disable"} and value == "all":
+        settings = await asyncio.to_thread(
+            database.set_all_options, chat_id, action == "enable"
+        )
+        notice = "모든 항목을 켰습니다." if action == "enable" else "모든 항목을 껐습니다."
+    else:
+        await query.answer("알 수 없는 설정입니다.")
+        return
 
-    for post in posts:
-        if last_num == 0:
-            new_last_num = max(new_last_num, post['number'])
+    await query.answer(notice)
+    try:
+        await query.edit_message_text(
+            format_settings_text(settings),
+            reply_markup=build_settings_keyboard(settings),
+        )
+    except BadRequest as error:
+        # 같은 내용으로의 수정은 텔레그램이 거부하므로 무시해도 됩니다.
+        if "not modified" not in str(error).lower():
+            raise
+
+
+# ----------------------------------------------------------------------
+# 공지 확인
+# ----------------------------------------------------------------------
+async def run_notice_check(bot, database):
+    """새 공지를 찾아 게시판을 구독한 사용자에게만 전송합니다."""
+    notifier = Notifier(bot, database)
+    await notifier.retry_pending_media()
+
+    last_numbers = await asyncio.to_thread(database.get_last_numbers)
+    posts_by_board = await asyncio.to_thread(crawler.get_latest_notices)
+    if not posts_by_board:
+        logger.warning("게시글을 불러오지 못했습니다.")
+        return
+
+    for board in BOARDS:
+        board_key = board["key"]
+        if board_key not in posts_by_board:
             continue
 
-        if post['number'] > last_num:
-            message = f"📢 <b>새로운 공지사항이 등록되었습니다!</b>\n\n"
-            message += f"▪️ <b>제목:</b> {post['title']}\n"
-            message += f"▪️ <b>링크:</b> <a href='{post['link']}'>바로가기</a>"
-            
-            if chat_ids:
-                send_telegram_message(message, chat_ids)
-                print(f"알림 전송 완료: {post['number']}번 글")
-            
-            new_last_num = max(new_last_num, post['number'])
+        posts = sorted(posts_by_board[board_key], key=lambda post: post["number"])
+        last_number = last_numbers.get(board_key, 0)
+        if last_number == 0:
+            # 첫 실행에서 과거 공지를 한꺼번에 보내지 않도록 현재 최신 글부터 시작합니다.
+            newest = max(post["number"] for post in posts)
+            await asyncio.to_thread(database.set_last_number, board_key, newest)
+            logger.info(
+                "%s 첫 실행: %d번 글 이후부터 알립니다.", board["name"], newest
+            )
+            continue
 
-    if new_last_num > last_num or last_num == 0:
-        with open(LAST_NUM_FILE, 'w', encoding='utf-8') as f:
-            f.write(str(new_last_num))
-        print(f"마지막 글 번호 업데이트 완료: {new_last_num}")
-    else:
-        print(f"새로운 공지사항이 없습니다. (마지막 글 번호: {last_num})")
+        recipients = await asyncio.to_thread(database.get_recipients, board_key)
+        new_last_number = last_number
+        for post in posts:
+            if post["number"] <= last_number:
+                continue
+
+            if recipients:
+                try:
+                    post.update(
+                        await asyncio.to_thread(
+                            crawler.get_notice_details,
+                            post["link"],
+                            post["board_url"],
+                        )
+                    )
+                except Exception as error:
+                    # 건너뛰면 실패한 공지를 영영 놓치므로 다음 실행에서 재시도합니다.
+                    logger.warning(
+                        "%s %d번 글 상세 내용 조회 실패: %s",
+                        board["name"],
+                        post["number"],
+                        error,
+                    )
+                    break
+
+                if not await notifier.deliver_notice(post, recipients):
+                    logger.warning(
+                        "%s %d번 글 전송 실패, 다음 실행에서 재시도합니다.",
+                        board["name"],
+                        post["number"],
+                    )
+                    break
+
+                logger.info(
+                    "알림 전송 완료: %s %d번 글 (%d명)",
+                    board["name"],
+                    post["number"],
+                    len(recipients),
+                )
+
+            new_last_number = post["number"]
+            # 한 건씩 저장해 두면 중간에 컨테이너가 멈춰도 다시 보내지 않습니다.
+            await asyncio.to_thread(
+                database.set_last_number, board_key, new_last_number
+            )
+
+        if new_last_number == last_number:
+            logger.info(
+                "%s 새로운 공지사항이 없습니다. (마지막 글 번호: %d)",
+                board["name"],
+                last_number,
+            )
+
+
+async def check_notices_job(context: ContextTypes.DEFAULT_TYPE):
+    """한 번에 하나씩만 크롤링합니다.
+
+    생활관 공지(입주, 모집, 결과 발표 등)는 CSE 학과 게시판과 달리 특정 요일이나
+    업무시간에 국한되지 않고 올라오므로, 시간대 제한 없이 항상 확인합니다.
+    """
+    if _crawl_lock.locked():
+        logger.info("이전 공지 확인이 아직 끝나지 않아 이번 실행은 건너뜁니다.")
+        return
+
+    async with _crawl_lock:
+        try:
+            await run_notice_check(context.bot, get_database(context))
+        except Exception:
+            # 한 번의 오류로 스케줄러가 멈추지 않도록 여기서 막습니다.
+            logger.exception("공지 확인 중 오류가 발생했습니다.")
+
+
+# ----------------------------------------------------------------------
+# 애플리케이션
+# ----------------------------------------------------------------------
+async def on_shutdown(application):
+    """종료 시 SQLite 연결을 정상적으로 닫습니다."""
+    database = application.bot_data.get("database")
+    if database is not None:
+        await asyncio.to_thread(database.close)
+        logger.info("데이터베이스 연결을 닫았습니다.")
+
+
+def build_application(database):
+    application = (
+        ApplicationBuilder()
+        .token(config.TELEGRAM_TOKEN)
+        # 구독자가 늘어도 텔레그램 전송 제한에 걸리지 않도록 속도를 조절합니다.
+        .rate_limiter(AIORateLimiter())
+        .post_shutdown(on_shutdown)
+        .build()
+    )
+    application.bot_data["database"] = database
+
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("settings", settings_command))
+    application.add_handler(CommandHandler("stop", stop_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(settings_callback))
+
+    application.job_queue.run_repeating(
+        check_notices_job,
+        interval=config.CHECK_INTERVAL_SECONDS,
+        first=10,
+        name="check-notices",
+    )
+    return application
+
+
+def main():
+    if not config.TELEGRAM_TOKEN:
+        raise SystemExit("오류: 환경변수에 TELEGRAM_TOKEN이 설정되지 않았습니다.")
+
+    database = Database(config.DB_PATH)
+    database.seed_board_state_from_legacy_file(config.LEGACY_STATE_FILE)
+
+    logger.info(
+        "봇을 시작합니다. 크롤링 주기 %d초, 시간대 %s (요일/시간 제한 없음)",
+        config.CHECK_INTERVAL_SECONDS,
+        config.TIMEZONE,
+    )
+    build_application(database).run_polling(
+        allowed_updates=Update.ALL_TYPES,
+    )
+
 
 if __name__ == "__main__":
-    print("공지사항 크롤링 및 구독자 알림을 시작합니다...")
-    check_new_notices()
+    main()
