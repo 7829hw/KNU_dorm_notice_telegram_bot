@@ -119,11 +119,24 @@ class CommandTest(BotTestCase):
             + [f"toggle_meal:{key}" for key in config.DORM_KEYS]
             + ["enable:all", "disable:all"],
         )
-        # 기숙사 3개는 한 줄에 나란히 배치되고, 전체 켜기/끄기는 맨 아래에 옵니다.
+
+        # 선발 공지사항은 단독 한 줄, BTL·재정은 한 줄에 나란히 배치됩니다.
         rows = reply.reply_markup.inline_keyboard
-        meal_row = rows[len(config.SUBSCRIPTION_KEYS)]
         self.assertEqual(
-            [button.callback_data for button in meal_row],
+            [button.callback_data for button in rows[0]], ["toggle:admission"]
+        )
+        self.assertEqual(
+            [button.callback_data for button in rows[1]],
+            ["toggle:btl", "toggle:jaejeong"],
+        )
+        # 본문 포함·첨부파일 포함도 한 줄에 나란히 배치됩니다.
+        self.assertEqual(
+            [button.callback_data for button in rows[2]],
+            ["toggle:include_content", "toggle:include_attachments"],
+        )
+        # 기숙사 3개는 한 줄에 나란히 배치되고, 전체 켜기/끄기는 맨 아래에 옵니다.
+        self.assertEqual(
+            [button.callback_data for button in rows[3]],
             [f"toggle_meal:{key}" for key in config.DORM_KEYS],
         )
         self.assertEqual(
@@ -318,17 +331,17 @@ class NoticeCheckTest(BotTestCase):
 
     async def test_each_board_keeps_its_own_cursor(self):
         posts = {}
-        for board, number in zip(config.BOARDS, (4456, 4272)):
+        for board, number in zip(config.BOARDS, (4456, 4272, 4260)):
             self.database.set_last_number(board["key"], number - 1)
             posts.update(self.make_posts([number], board))
         self.database.ensure_user(1)
 
         deliver = await self.run_check(posts)
 
-        self.assertEqual(deliver.await_count, 2)
+        self.assertEqual(deliver.await_count, 3)
         self.assertEqual(
             self.database.get_last_numbers(),
-            {"admission": 4456, "btl": 4272},
+            {"admission": 4456, "btl": 4272, "jaejeong": 4260},
         )
 
 

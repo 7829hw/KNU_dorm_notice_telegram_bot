@@ -154,7 +154,8 @@ class BoardStateTest(DatabaseTestCase):
 
         self.assertTrue(self.database.seed_board_state_from_legacy_file(legacy))
         self.assertEqual(
-            self.database.get_last_numbers(), {"admission": 4455, "btl": 4271}
+            self.database.get_last_numbers(),
+            {"admission": 4455, "btl": 4271, "jaejeong": 0},
         )
 
         # 이미 상태가 있으면 다시 덮어쓰지 않습니다.
@@ -171,7 +172,8 @@ class BoardStateTest(DatabaseTestCase):
         self.database.seed_board_state_from_legacy_file(legacy)
 
         self.assertEqual(
-            self.database.get_last_numbers(), {"admission": 4455, "btl": 0}
+            self.database.get_last_numbers(),
+            {"admission": 4455, "btl": 0, "jaejeong": 0},
         )
 
     def test_missing_legacy_file_is_ignored(self):

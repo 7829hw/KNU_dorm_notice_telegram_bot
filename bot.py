@@ -16,7 +16,14 @@ from telegram.ext import (
 import config
 import crawler
 import meal_crawler
-from config import BOARDS, DORM_NAMES, DORMS, OPTION_LABELS, SUBSCRIPTION_KEYS
+from config import (
+    BOARDS,
+    CONTENT_OPTION_KEYS,
+    DORM_NAMES,
+    DORMS,
+    OPTION_LABELS,
+    SUBSCRIPTION_KEYS,
+)
 from database import Database
 from notifier import Notifier
 
@@ -82,22 +89,23 @@ def format_settings_text(settings):
 
 def build_settings_keyboard(settings):
     """항목별 토글과 전체 켜기/끄기 버튼을 만듭니다."""
-    rows = [
-        [
-            InlineKeyboardButton(
-                f"{'✅' if settings[key] else '⬜'} {OPTION_LABELS[key]}",
-                callback_data=f"toggle:{key}",
-            )
-        ]
-        for key in SUBSCRIPTION_KEYS
-    ]
-    rows.append([
-        InlineKeyboardButton(
+    def option_button(key):
+        return InlineKeyboardButton(
+            f"{'✅' if settings[key] else '⬜'} {OPTION_LABELS[key]}",
+            callback_data=f"toggle:{key}",
+        )
+
+    def meal_button(dorm):
+        return InlineKeyboardButton(
             f"{'✅' if settings['meal_' + dorm['key']] else '⬜'} {dorm['name']}",
             callback_data=f"toggle_meal:{dorm['key']}",
         )
-        for dorm in DORMS
-    ])
+
+    # 선발 공지사항은 단독 한 줄, 나머지 게시판(BTL·재정)은 한 줄에 나란히 둡니다.
+    rows = [[option_button(BOARDS[0]["key"])]]
+    rows.append([option_button(board["key"]) for board in BOARDS[1:]])
+    rows.append([option_button(key) for key in CONTENT_OPTION_KEYS])
+    rows.append([meal_button(dorm) for dorm in DORMS])
     rows.append([
         InlineKeyboardButton("✅ 전체 활성화", callback_data="enable:all"),
         InlineKeyboardButton("🔕 전체 비활성화", callback_data="disable:all"),

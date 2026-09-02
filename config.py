@@ -38,6 +38,12 @@ BOARDS = (
         "url": "https://dorm.knu.ac.kr/app/board21",
         "uses_legacy_cursor": False,
     },
+    {
+        "key": "jaejeong",
+        "name": "공지사항(재정)",
+        "url": "https://dorm.knu.ac.kr/app/board2",
+        "uses_legacy_cursor": False,
+    },
 )
 BOARD_KEYS = tuple(board["key"] for board in BOARDS)
 BOARD_NAMES = {board["key"]: board["name"] for board in BOARDS}
@@ -48,6 +54,7 @@ SUBSCRIPTION_KEYS = BOARD_KEYS + CONTENT_OPTION_KEYS
 OPTION_LABELS = {
     "admission": "선발 공지사항",
     "btl": "공지사항(BTL)",
+    "jaejeong": "공지사항(재정)",
     "include_content": "본문 포함",
     "include_attachments": "첨부파일·이미지 포함",
 }

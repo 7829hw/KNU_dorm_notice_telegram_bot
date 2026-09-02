@@ -60,6 +60,7 @@ class NoticeCrawlerTest(unittest.TestCase):
             (
                 "https://dorm.knu.ac.kr/app/board24",
                 "https://dorm.knu.ac.kr/app/board21",
+                "https://dorm.knu.ac.kr/app/board2",
             ),
         )
 
@@ -67,6 +68,7 @@ class NoticeCrawlerTest(unittest.TestCase):
         fixtures = (
             (BOARDS[0], 4455, "선발 공지사항 추가모집 안내"),
             (BOARDS[1], 4271, "생활관 화재 대피훈련 안내"),
+            (BOARDS[2], 4259, "재정 기숙사 상담센터 안내"),
         )
 
         for board, post_id, title in fixtures:
