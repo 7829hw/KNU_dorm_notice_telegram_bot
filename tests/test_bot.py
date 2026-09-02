@@ -116,8 +116,19 @@ class CommandTest(BotTestCase):
         self.assertEqual(
             [button.callback_data for button in buttons],
             [f"toggle:{key}" for key in config.SUBSCRIPTION_KEYS]
-            + ["enable:all", "disable:all"]
-            + [f"toggle_meal:{key}" for key in config.DORM_KEYS],
+            + [f"toggle_meal:{key}" for key in config.DORM_KEYS]
+            + ["enable:all", "disable:all"],
+        )
+        # 기숙사 3개는 한 줄에 나란히 배치되고, 전체 켜기/끄기는 맨 아래에 옵니다.
+        rows = reply.reply_markup.inline_keyboard
+        meal_row = rows[len(config.SUBSCRIPTION_KEYS)]
+        self.assertEqual(
+            [button.callback_data for button in meal_row],
+            [f"toggle_meal:{key}" for key in config.DORM_KEYS],
+        )
+        self.assertEqual(
+            [button.callback_data for button in rows[-1]],
+            ["enable:all", "disable:all"],
         )
         self.assertIn("공지 알림 설정", reply.text)
         self.assertIn("🍚 식단표", reply.text)

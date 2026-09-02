@@ -92,18 +92,16 @@ def build_settings_keyboard(settings):
         for key in SUBSCRIPTION_KEYS
     ]
     rows.append([
+        InlineKeyboardButton(
+            f"{'✅' if settings['meal_' + dorm['key']] else '⬜'} {dorm['name']}",
+            callback_data=f"toggle_meal:{dorm['key']}",
+        )
+        for dorm in DORMS
+    ])
+    rows.append([
         InlineKeyboardButton("✅ 전체 활성화", callback_data="enable:all"),
         InlineKeyboardButton("🔕 전체 비활성화", callback_data="disable:all"),
     ])
-    rows += [
-        [
-            InlineKeyboardButton(
-                f"{'✅' if settings['meal_' + dorm['key']] else '⬜'} {dorm['name']}",
-                callback_data=f"toggle_meal:{dorm['key']}",
-            )
-        ]
-        for dorm in DORMS
-    ]
     return InlineKeyboardMarkup(rows)
 
 
